@@ -5,21 +5,34 @@ import 'package:latlong2/latlong.dart';
 import 'package:xml/xml.dart';
 
 class GpxResult {
-  final List<LatLng> route;
+  final List<List<LatLng>> polylines;
+  final List<List<double>> elevations;
+  final double totalDistance;
   final List<GpxWaypoint> waypoints;
 
-  GpxResult({required this.route, required this.waypoints});
+  GpxResult({
+    required this.polylines,
+    required this.elevations,
+    required this.totalDistance,
+    required this.waypoints,
+  });
 }
 
 class GpxWaypoint {
   final LatLng point;
   final String name;
 
-  GpxWaypoint({required this.point, required this.name});
+  GpxWaypoint({
+    required this.point,
+    required this.name,
+  });
 }
 
 class GpxService {
-  // ================= LOAD GPX =================
+  static const double _MAX_POINT_DISTANCE = 500; // meter (anti GPX rusak)
+  static final Distance _distance = const Distance();
+
+  // ================= LOAD GPX ASSET =================
   static Future<GpxResult> loadGpx(String assetPath) async {
     final xmlString = await rootBundle.loadString(assetPath);
     return _parseGpx(xmlString);
@@ -49,28 +62,75 @@ class GpxService {
     return _parseGpx(xmlString);
   }
 
-  // ================= PARSER =================
+  // ================= PARSER GPX =================
   static GpxResult _parseGpx(String xmlString) {
     final document = XmlDocument.parse(xmlString);
 
-    final List<LatLng> route = [];
+    final List<List<LatLng>> polylines = [];
+    final List<List<double>> elevations = [];
     final List<GpxWaypoint> waypoints = [];
 
-    // Track
-    for (final trkpt in document.findAllElements('trkpt')) {
-      final lat = double.parse(trkpt.getAttribute('lat')!);
-      final lon = double.parse(trkpt.getAttribute('lon')!);
-      route.add(LatLng(lat, lon));
-    }
+    double totalDistance = 0;
 
-    // Waypoints
+    // ===== WAYPOINT =====
     for (final wpt in document.findAllElements('wpt')) {
-      final lat = double.parse(wpt.getAttribute('lat')!);
-      final lon = double.parse(wpt.getAttribute('lon')!);
-      final name = wpt.getElement('name')?.text ?? 'Waypoint';
-      waypoints.add(GpxWaypoint(point: LatLng(lat, lon), name: name));
+      final lat = double.tryParse(wpt.getAttribute('lat') ?? '');
+      final lon = double.tryParse(wpt.getAttribute('lon') ?? '');
+      if (lat == null || lon == null) continue;
+
+      waypoints.add(
+        GpxWaypoint(
+          point: LatLng(lat, lon),
+          name: wpt.getElement('name')?.text ?? 'Waypoint',
+        ),
+      );
     }
 
-    return GpxResult(route: route, waypoints: waypoints);
+    // ===== TRACK SEGMENTS =====
+    for (final trkseg in document.findAllElements('trkseg')) {
+      final List<LatLng> segmentPoints = [];
+      final List<double> segmentElevations = [];
+
+      LatLng? lastPoint;
+
+      for (final pt in trkseg.findElements('trkpt')) {
+        final lat = double.tryParse(pt.getAttribute('lat') ?? '');
+        final lon = double.tryParse(pt.getAttribute('lon') ?? '');
+        if (lat == null || lon == null) continue;
+
+        final point = LatLng(lat, lon);
+        final elevation =
+            double.tryParse(pt.getElement('ele')?.text ?? '') ?? 0;
+
+        if (lastPoint != null) {
+          final dist = _distance.as(
+            LengthUnit.Meter,
+            lastPoint,
+            point,
+          );
+
+          // 🔒 Filter lonjakan GPX rusak
+          if (dist > _MAX_POINT_DISTANCE) continue;
+
+          totalDistance += dist;
+        }
+
+        segmentPoints.add(point);
+        segmentElevations.add(elevation);
+        lastPoint = point;
+      }
+
+      if (segmentPoints.length > 1) {
+        polylines.add(segmentPoints);
+        elevations.add(segmentElevations);
+      }
+    }
+
+    return GpxResult(
+      polylines: polylines,
+      elevations: elevations,
+      totalDistance: totalDistance,
+      waypoints: waypoints,
+    );
   }
 }

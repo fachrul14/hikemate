@@ -1,91 +1,149 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
+import 'package:hikemate/widgets/app_header.dart';
 
-class InformasiAkunScreen extends StatelessWidget {
+class InformasiAkunScreen extends StatefulWidget {
   const InformasiAkunScreen({super.key});
 
+  @override
+  State<InformasiAkunScreen> createState() => _InformasiAkunScreenState();
+}
+
+class _InformasiAkunScreenState extends State<InformasiAkunScreen> {
+  final supabase = Supabase.instance.client;
+
+  bool isLoading = true;
+
+  String username = '-';
+  String phone = '-';
+  String email = '-';
+  String gender = '-';
+  String birthDate = '-';
+  String emergencyContacts = '-';
+
+  @override
+  void initState() {
+    super.initState();
+    fetchAccountInfo();
+  }
+
+  // ================= FETCH DATA =================
+  Future<void> fetchAccountInfo() async {
+    final user = supabase.auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final profile =
+          await supabase.from('profiles').select().eq('id', user.id).single();
+
+      final contacts = await supabase
+          .from('emergency_contacts')
+          .select('name, phone')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: true)
+          .limit(2);
+
+      setState(() {
+        username = profile['username'] ?? '-';
+        phone = profile['phone'] ?? '-';
+        email = user.email ?? '-';
+
+        gender =
+            profile['gender'] != null ? _formatGender(profile['gender']) : '-';
+
+        if (profile['birth_date'] != null) {
+          birthDate = DateFormat('dd-MM-yyyy')
+              .format(DateTime.parse(profile['birth_date']));
+        }
+
+        if (contacts.isNotEmpty) {
+          emergencyContacts =
+              contacts.map((c) => "${c['name']} (${c['phone']})").join('\n');
+        }
+
+        isLoading = false;
+      });
+    } catch (e) {
+      isLoading = false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Gagal memuat data akun")),
+      );
+    }
+  }
+
+  // ================= FORMAT =================
+  String _formatGender(String g) {
+    if (g.toLowerCase() == 'laki-laki') return 'Laki-Laki';
+    if (g.toLowerCase() == 'perempuan') return 'Perempuan';
+    return g;
+  }
+
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
       body: Column(
         children: [
-          // 1. Header Biru Cyan
-          Container(
-            padding: const EdgeInsets.only(top: 30, bottom: 5, left: 10, right: 15),
-            decoration: const BoxDecoration(
-              color: Color(0xFF0097B2),
-              borderRadius: BorderRadius.vertical(bottom: Radius.circular(20)),
-            ),
-            child: Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  onPressed: () => Navigator.pop(context),
-                ),
-                Image.asset(
-                  "assets/images/logo.png",
-                  width: 45,
-                  height: 45,
-                  errorBuilder: (context, error, stackTrace) =>
-                      const Icon(Icons.terrain, color: Colors.orange, size: 30),
-                ),
-                const Expanded(
-                  child: Text(
-                    "Informasi Akun",
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
+          _header(context),
           const SizedBox(height: 30),
-
-          // 2. Kartu Informasi Akun
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 25),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: const Color(0xFF0097B2), width: 2),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 10,
-                    offset: const Offset(0, 5),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildInfoItem("Nama Pengguna", "Hemachandra"),
-                  const SizedBox(height: 15),
-                  _buildInfoItem("Info Kontak", "+6285652130476\nhema234@gmail.com"),
-                  const SizedBox(height: 15),
-                  _buildInfoItem("Jenis Kelamin", "Laki-Laki"),
-                  const SizedBox(height: 15),
-                  _buildInfoItem("Tanggal Lahir", "13-09-2003"),
-                  const SizedBox(height: 15),
-                  _buildInfoItem("Kontak Darurat", "Rania (+6285693547261)\nNathan (+6285735217098)"),
-                ],
+          if (isLoading)
+            const Expanded(
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 25),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  border: Border.all(color: const Color(0xFF0097B2), width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildInfoItem("Nama Pengguna", username),
+                    const SizedBox(height: 15),
+                    _buildInfoItem(
+                      "Info Kontak",
+                      "$phone\n$email",
+                    ),
+                    const SizedBox(height: 15),
+                    _buildInfoItem("Jenis Kelamin", gender),
+                    const SizedBox(height: 15),
+                    _buildInfoItem("Tanggal Lahir", birthDate),
+                    const SizedBox(height: 15),
+                    _buildInfoItem("Kontak Darurat", emergencyContacts),
+                  ],
+                ),
               ),
             ),
-          ),
         ],
       ),
     );
   }
 
-  // Widget Helper untuk item informasi
+  // ================= HEADER =================
+  Widget _header(BuildContext context) {
+    return AppHeader(
+      title: "Informasi Akun",
+      showBack: true, // tampilkan panah back di kiri
+      onBack: () => Navigator.pop(context),
+    );
+  }
+
+  // ================= ITEM =================
   Widget _buildInfoItem(String title, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -98,13 +156,13 @@ class InformasiAkunScreen extends StatelessWidget {
             color: Colors.black,
           ),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(height: 4),
         Text(
-          value,
+          value.isEmpty ? '-' : value,
           style: const TextStyle(
             fontSize: 15,
             color: Colors.grey,
-            height: 1.3, // Memberikan jarak antar baris jika teks multiline
+            height: 1.3,
           ),
         ),
       ],

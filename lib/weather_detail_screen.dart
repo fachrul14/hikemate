@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class WeatherDetailScreen extends StatefulWidget {
   const WeatherDetailScreen({super.key});
@@ -14,6 +15,44 @@ class WeatherDetailScreen extends StatefulWidget {
 class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   // ================= CONFIG =================
   final String apiKey = "b90d953c26626c8384f67acf1efc7b4a";
+
+  String normalizeConditionFromMain(String main) {
+    switch (main.toLowerCase()) {
+      case 'clear':
+        return 'Cerah';
+      case 'clouds':
+        return 'Berawan';
+      case 'rain':
+      case 'drizzle':
+        return 'Hujan';
+      case 'thunderstorm':
+        return 'Badai';
+      case 'mist':
+      case 'fog':
+      case 'haze':
+        return 'Berkabut';
+      default:
+        return 'Tidak diketahui';
+    }
+  }
+
+  String windDirectionFromDegree(int degree) {
+    if (degree < 0) return "-";
+
+    const directions = [
+      "Utara",
+      "Timur Laut",
+      "Timur",
+      "Tenggara",
+      "Selatan",
+      "Barat Daya",
+      "Barat",
+      "Barat Laut"
+    ];
+
+    final index = ((degree + 22.5) ~/ 45) % 8;
+    return directions[index];
+  }
 
   bool isLoading = true;
 
@@ -35,50 +74,7 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   // ================= LOCATION =================
   double lat = 0;
   double lon = 0;
-
-  // ================= ICON LOGIC =================
-  IconData getWeatherIcon() {
-    switch (weatherMain.toLowerCase()) {
-      case 'clear':
-        return Icons.wb_sunny;
-      case 'clouds':
-        return Icons.cloud;
-      case 'rain':
-      case 'drizzle':
-        return Icons.grain;
-      case 'thunderstorm':
-        return Icons.flash_on;
-      case 'snow':
-        return Icons.ac_unit;
-      case 'mist':
-      case 'fog':
-      case 'haze':
-        return Icons.blur_on;
-      default:
-        return Icons.cloud_queue;
-    }
-  }
-
-  Color getHeaderColor() {
-    switch (weatherMain.toLowerCase()) {
-      case 'clear':
-        return const Color(0xFF0097B2); // Biru cerah
-      case 'clouds':
-        return const Color(0xFF607D8B); // Biru keabu
-      case 'rain':
-      case 'drizzle':
-      case 'thunderstorm':
-        return const Color(0xFF455A64); // Abu gelap
-      case 'snow':
-        return const Color(0xFF81D4FA); // Biru muda
-      case 'mist':
-      case 'fog':
-      case 'haze':
-        return const Color(0xFF9E9E9E); // Abu muda
-      default:
-        return const Color(0xFF0097B2);
-    }
-  }
+  double altitude = 0; //
 
   // ================= GPS =================
   Future<void> _getLocation() async {
@@ -95,11 +91,12 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
     }
 
     final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.high,
+      desiredAccuracy: LocationAccuracy.low, // ⬅️ HEMAT BATERAI
     );
 
     lat = position.latitude;
     lon = position.longitude;
+    altitude = position.altitude;
   }
 
   // ================= ADDRESS =================
@@ -119,11 +116,54 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
     }
   }
 
+  // ================= CACHE =================
+  Future<void> saveCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    prefs.setDouble('temperature', temperature);
+    prefs.setDouble('feelsLike', feelsLike);
+    prefs.setInt('humidity', humidity);
+    prefs.setInt('pressure', pressure);
+    prefs.setDouble('windSpeed', windSpeed);
+    prefs.setInt('windDegree', windDegree);
+    prefs.setInt('visibility', visibility);
+    prefs.setInt('cloudiness', cloudiness);
+    prefs.setString('condition', condition);
+    prefs.setString('weatherMain', weatherMain);
+    prefs.setString('weatherIcon', weatherIcon);
+    prefs.setString('address', fullAddress);
+    prefs.setDouble('altitude', altitude);
+  }
+
+  Future<bool> loadCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!prefs.containsKey('temperature')) return false;
+
+    if (!mounted) return false;
+
+    setState(() {
+      temperature = prefs.getDouble('temperature') ?? 0;
+      feelsLike = prefs.getDouble('feelsLike') ?? 0;
+      humidity = prefs.getInt('humidity') ?? 0;
+      pressure = prefs.getInt('pressure') ?? 0;
+      windSpeed = prefs.getDouble('windSpeed') ?? 0;
+      windDegree = prefs.getInt('windDegree') ?? 0;
+      visibility = prefs.getInt('visibility') ?? 0;
+      cloudiness = prefs.getInt('cloudiness') ?? 0;
+      condition = prefs.getString('condition') ?? "-";
+      weatherMain = prefs.getString('weatherMain') ?? "";
+      weatherIcon = prefs.getString('weatherIcon') ?? "01d";
+      fullAddress = prefs.getString('address') ?? "-";
+      altitude = prefs.getDouble('altitude') ?? 0;
+      isLoading = false;
+    });
+
+    return true;
+  }
+
   // ================= FETCH WEATHER =================
   Future<void> fetchWeather() async {
     try {
       await _getLocation();
-      await _getAddress();
 
       final url = "https://api.openweathermap.org/data/2.5/weather"
           "?lat=$lat&lon=$lon"
@@ -131,10 +171,12 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
           "&lang=id"
           "&appid=$apiKey";
 
-      final response = await http.get(Uri.parse(url));
-      if (response.statusCode != 200) return;
+      final response =
+          await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
 
       final data = json.decode(response.body);
+
+      if (!mounted) return;
 
       setState(() {
         temperature = (data['main']['temp'] ?? 0).toDouble();
@@ -148,11 +190,18 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
         condition = data['weather'][0]['description'] ?? "-";
         weatherMain = data['weather'][0]['main'] ?? "";
         weatherIcon = data['weather'][0]['icon'] ?? "01d";
-
         isLoading = false;
       });
+
+      saveCache();
+
+      _getAddress().then((_) {
+        if (!mounted) return;
+        setState(() {});
+      });
     } catch (e) {
-      debugPrint("ERROR: $e");
+      debugPrint("OFFLINE MODE: $e");
+      await loadCache();
     }
   }
 
@@ -172,17 +221,17 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
           : SingleChildScrollView(
               child: Column(
                 children: [
-                  // ================= HEADER =================
                   Container(
                     padding: const EdgeInsets.only(
                         top: 40, bottom: 25, left: 15, right: 15),
                     decoration: BoxDecoration(
-                      color: getHeaderColor(),
+                      color: _getHeaderColor(),
                       borderRadius: const BorderRadius.vertical(
                           bottom: Radius.circular(25)),
                     ),
                     child: Column(
                       children: [
+                        // ===== TOP BAR =====
                         Row(
                           children: [
                             IconButton(
@@ -192,32 +241,40 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
                             ),
                             Image.asset(
                               "assets/images/logo.png",
-                              width: 45,
-                              height: 45,
-                              errorBuilder: (context, error, stackTrace) =>
-                                  const Icon(Icons.terrain,
-                                      color: Colors.white, size: 40),
+                              width: 40,
+                              height: 40,
+                              errorBuilder: (_, __, ___) => const Icon(
+                                  Icons.terrain,
+                                  color: Colors.white,
+                                  size: 36),
                             ),
                             const Spacer(),
                             const Text(
                               "Detail Cuaca",
                               style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 20,
-                                  fontWeight: FontWeight.bold),
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
                             ),
                             const Spacer(),
                           ],
                         ),
+
                         const SizedBox(height: 15),
+
+                        // ===== WEATHER ICON =====
                         Image.network(
                           "https://openweathermap.org/img/wn/$weatherIcon@4x.png",
                           width: 60,
                           height: 60,
-                          errorBuilder: (_, __, ___) =>
-                              const Icon(Icons.cloud, size: 50),
+                          errorBuilder: (_, __, ___) => const Icon(Icons.cloud,
+                              size: 50, color: Colors.white),
                         ),
+
                         const SizedBox(height: 10),
+
+                        // ===== TEMPERATURE =====
                         Text(
                           "${temperature.toStringAsFixed(1)} ℃",
                           style: const TextStyle(
@@ -225,25 +282,45 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
                               fontSize: 30,
                               fontWeight: FontWeight.bold),
                         ),
-                        Text(
-                          condition,
-                          style: const TextStyle(
-                              color: Colors.white70, fontSize: 16),
+
+                        // ===== CONDITION =====
+                        Column(
+                          children: [
+                            Text(
+                              normalizeConditionFromMain(weatherMain),
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            Text(
+                              condition,
+                              style: const TextStyle(
+                                color: Colors.white38,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
+
                         const SizedBox(height: 8),
+
+                        // ===== ADDRESS =====
                         Text(
-                          fullAddress,
+                          fullAddress == "-"
+                              ? "Mengambil lokasi..."
+                              : fullAddress,
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                              color: Colors.white70, fontSize: 13),
+                            color: Colors.white70,
+                            fontSize: 13,
+                          ),
                         ),
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 30),
-
-                  // ================= DETAIL CARD =================
                   _weatherCard([
                     _buildWeatherRow(
                         Icons.thermostat, "Terasa", "$feelsLike ℃"),
@@ -256,7 +333,10 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
                     _buildWeatherRow(
                         Icons.cloud, "Cloudiness", "$cloudiness %"),
                     _buildWeatherRow(
-                        Icons.navigation, "Arah Angin", "$windDegree°"),
+                      Icons.navigation,
+                      "Arah Angin",
+                      "${windDirectionFromDegree(windDegree)} ($windDegree°)",
+                    ),
                   ]),
                 ],
               ),
@@ -264,7 +344,21 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
     );
   }
 
-  // ================= COMPONENT =================
+  Color _getHeaderColor() {
+    switch (weatherMain.toLowerCase()) {
+      case 'clear':
+        return const Color(0xFF0097B2);
+      case 'clouds':
+        return const Color(0xFF607D8B);
+      case 'rain':
+      case 'drizzle':
+      case 'thunderstorm':
+        return const Color(0xFF455A64);
+      default:
+        return const Color(0xFF0097B2);
+    }
+  }
+
   Widget _weatherCard(List<Widget> children) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),

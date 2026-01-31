@@ -2,10 +2,17 @@
 
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+
+    <queries>
+    <package android:name="com.whatsapp" />
+    <package android:name="com.whatsapp.w4b" />
+</queries>
+
 
 
     <application
-        android:label="hikemate"
+        android:label="HikeMate"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
 
@@ -30,7 +37,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- ✅ SUPABASE GOOGLE OAUTH DEEP LINK -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
 
