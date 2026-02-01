@@ -21,15 +21,24 @@ class TrackingPage extends StatefulWidget {
 }
 
 class _TrackingPageState extends State<TrackingPage> {
+  double smoothElevation(double newValue) {
+    if (elevationData.isEmpty) return newValue;
+
+    const double alpha = 0.25; // 0.2–0.3 ideal untuk GPS
+    return (elevationData.last * (1 - alpha)) + (newValue * alpha);
+  }
+
   // ================= KONSTANTA =================
   static const double MIN_MOVE_DISTANCE = 8;
   static const double MAX_ACCURACY = 20;
   static const double ELEVATION_THRESHOLD = 3;
   static const double STEP_LENGTH = 0.75;
   static const Duration SAVE_POINT_INTERVAL = Duration(seconds: 5);
+  static const double MAP_MOVE_THRESHOLD = 20;
 
   // ================= MAP =================
   final MapController _mapController = MapController();
+  Timer? _mapMoveTimer;
 
   // ================= SUPABASE =================
   final supabase = Supabase.instance.client;
@@ -39,7 +48,6 @@ class _TrackingPageState extends State<TrackingPage> {
   // ================= DATA =================
   final List<LatLng> trackedRoute = [];
   final List<double> elevationData = [];
-
   StreamSubscription<Position>? positionStream;
   DateTime? _lastSaveTime;
 
@@ -55,7 +63,25 @@ class _TrackingPageState extends State<TrackingPage> {
   double elevationGain = 0;
   int currentSteps = 0;
 
+  Timer? _durationTimer;
   bool _isDisposed = false;
+
+  double getMinElevation() => elevationData.reduce((a, b) => a < b ? a : b);
+
+  double getMaxElevation() => elevationData.reduce((a, b) => a > b ? a : b);
+
+  // ================= UTIL =================
+  void _safeSetState(VoidCallback fn) {
+    if (mounted && !_isDisposed) {
+      setState(fn);
+    }
+  }
+
+  double getStepFactor() {
+    if (elevationGain > 500) return 0.85;
+    if (elevationGain > 200) return 0.9;
+    return 1.0;
+  }
 
   // ================= INIT =================
   @override
@@ -63,6 +89,12 @@ class _TrackingPageState extends State<TrackingPage> {
     super.initState();
     startTime = DateTime.now();
     _init();
+
+    _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      _safeSetState(() {
+        trackingDuration = DateTime.now().difference(startTime);
+      });
+    });
   }
 
   Future<void> _init() async {
@@ -74,6 +106,8 @@ class _TrackingPageState extends State<TrackingPage> {
   void dispose() {
     _isDisposed = true;
     positionStream?.cancel();
+    _durationTimer?.cancel();
+    _mapMoveTimer?.cancel();
     _safeEndSession();
     super.dispose();
   }
@@ -94,8 +128,10 @@ class _TrackingPageState extends State<TrackingPage> {
           .select()
           .single();
 
-      if (!_isDisposed) trackingSessionId = res['id'];
-    } catch (_) {}
+      trackingSessionId = res['id'];
+    } catch (e) {
+      debugPrint("Create session error: $e");
+    }
   }
 
   Future<void> _safeEndSession() async {
@@ -109,14 +145,16 @@ class _TrackingPageState extends State<TrackingPage> {
         'steps': currentSteps,
         'elevation_gain': elevationGain,
       }).eq('id', trackingSessionId!);
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("End session error: $e");
+    }
   }
 
   // ================= LOCATION =================
   Future<void> _initLocation() async {
     if (!await Geolocator.isLocationServiceEnabled()) return;
 
-    LocationPermission permission = await Geolocator.checkPermission();
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
     }
@@ -126,14 +164,12 @@ class _TrackingPageState extends State<TrackingPage> {
       desiredAccuracy: LocationAccuracy.high,
     );
 
-    if (!mounted || _isDisposed) return;
-
     currentPosition = LatLng(pos.latitude, pos.longitude);
     trackedRoute.add(currentPosition!);
-    currentElevation = pos.altitude;
+    currentElevation = smoothElevation(pos.altitude);
     elevationData.add(currentElevation);
 
-    setState(() {});
+    _safeSetState(() {});
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_isDisposed) _mapController.move(currentPosition!, 16);
@@ -142,7 +178,7 @@ class _TrackingPageState extends State<TrackingPage> {
     positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 10,
+        distanceFilter: 5,
       ),
     ).listen(_onLocationUpdate);
   }
@@ -170,8 +206,6 @@ class _TrackingPageState extends State<TrackingPage> {
         elevationData.isNotEmpty ? pos.altitude - elevationData.last : 0;
     if (diffElev > ELEVATION_THRESHOLD) elevationGain += diffElev;
 
-    trackingDuration = DateTime.now().difference(startTime);
-
     currentSpeedKmh = pos.speed > 0 ? pos.speed * 3.6 : 0;
     avgSpeedKmh = trackingDuration.inSeconds > 0
         ? (totalDistance / 1000) / (trackingDuration.inSeconds / 3600)
@@ -181,10 +215,21 @@ class _TrackingPageState extends State<TrackingPage> {
     currentPosition = newPoint;
     currentElevation = pos.altitude;
     elevationData.add(currentElevation);
-    currentSteps = (totalDistance / STEP_LENGTH).round();
+    currentSteps = ((totalDistance / STEP_LENGTH) * getStepFactor()).round();
 
-    if (mounted) setState(() {});
-    if (!_isDisposed) _mapController.move(newPoint, _mapController.camera.zoom);
+    _safeSetState(() {});
+
+    if (distance > MAP_MOVE_THRESHOLD) {
+      _mapMoveTimer ??= Timer(const Duration(seconds: 2), () {
+        if (!_isDisposed && currentPosition != null) {
+          _mapController.move(
+            currentPosition!,
+            _mapController.camera.zoom,
+          );
+        }
+        _mapMoveTimer = null;
+      });
+    }
 
     _saveTrackingPointThrottled(pos);
   }
@@ -200,8 +245,6 @@ class _TrackingPageState extends State<TrackingPage> {
   }
 
   Future<void> _saveTrackingPoint(Position pos) async {
-    if (_isDisposed || trackingSessionId == null) return;
-
     try {
       await supabase.from('tracking_points').insert({
         'session_id': trackingSessionId,
@@ -210,7 +253,9 @@ class _TrackingPageState extends State<TrackingPage> {
         'elevation': pos.altitude,
         'created_at': DateTime.now().toIso8601String(),
       });
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("Save point error: $e");
+    }
   }
 
   // ================= UI =================
@@ -219,9 +264,9 @@ class _TrackingPageState extends State<TrackingPage> {
     if (currentPosition == null) {
       return Scaffold(
         body: Column(
-          children: [
-            _header(),
-            const Expanded(child: Center(child: CircularProgressIndicator())),
+          children: const [
+            AppHeader(title: "Tracking Jalur dan Elevasi", showBack: true),
+            Expanded(child: Center(child: CircularProgressIndicator())),
           ],
         ),
       );
@@ -230,8 +275,9 @@ class _TrackingPageState extends State<TrackingPage> {
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: const Color.fromARGB(255, 0, 133, 234),
-        icon: const Icon(Icons.flag),
-        label: const Text("Akhiri Pendakian"),
+        icon: const Icon(Icons.flag, color: Colors.white),
+        label: const Text("Akhiri Pendakian",
+            style: TextStyle(color: Colors.white)),
         onPressed: () async {
           await _safeEndSession();
           if (mounted) Navigator.pop(context);
@@ -239,7 +285,7 @@ class _TrackingPageState extends State<TrackingPage> {
       ),
       body: Column(
         children: [
-          _header(),
+          const AppHeader(title: "Tracking Jalur dan Elevasi", showBack: true),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(15),
@@ -267,13 +313,6 @@ class _TrackingPageState extends State<TrackingPage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _header() {
-    return const AppHeader(
-      title: "Tracking Jalur dan Elevasi",
-      showBack: true,
     );
   }
 
@@ -340,7 +379,12 @@ class _TrackingPageState extends State<TrackingPage> {
                 borderRadius: BorderRadius.circular(25),
               ),
             ),
-            child: const Text("Mode SOS"),
+            child: const Text(
+              "Mode SOS",
+              style: TextStyle(
+                color: Colors.white,
+              ),
+            ),
           ),
         ),
       ],
@@ -348,28 +392,28 @@ class _TrackingPageState extends State<TrackingPage> {
   }
 
   // ================= STATS =================
-  Widget _statCard(String label, String value, IconData icon) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: const [
-          BoxShadow(color: Colors.black12, blurRadius: 6),
-        ],
-      ),
-      child: Column(
-        children: [
-          Icon(icon, color: Colors.teal),
-          const SizedBox(height: 6),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text(label, style: const TextStyle(fontSize: 11)),
-        ],
-      ),
-    );
-  }
-
   Widget _statsSection() {
+    Widget card(String label, String value, IconData icon) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [
+            BoxShadow(color: Colors.black12, blurRadius: 6),
+          ],
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: Colors.teal),
+            const SizedBox(height: 6),
+            Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text(label, style: const TextStyle(fontSize: 11)),
+          ],
+        ),
+      );
+    }
+
     return GridView.count(
       crossAxisCount: 3,
       shrinkWrap: true,
@@ -377,15 +421,15 @@ class _TrackingPageState extends State<TrackingPage> {
       crossAxisSpacing: 10,
       mainAxisSpacing: 10,
       children: [
-        _statCard("Durasi", "${trackingDuration.inMinutes} mnt", Icons.timer),
-        _statCard("Jarak", "${(totalDistance / 1000).toStringAsFixed(2)} km",
+        card("Durasi", "${trackingDuration.inMinutes} mnt", Icons.timer),
+        card("Jarak", "${(totalDistance / 1000).toStringAsFixed(2)} km",
             Icons.route),
-        _statCard("Langkah", "$currentSteps", Icons.directions_walk),
-        _statCard(
+        card("Langkah", "$currentSteps", Icons.directions_walk),
+        card(
             "Speed", "${currentSpeedKmh.toStringAsFixed(1)} km/h", Icons.speed),
-        _statCard("Avg Speed", "${avgSpeedKmh.toStringAsFixed(1)} km/h",
+        card("Avg Speed", "${avgSpeedKmh.toStringAsFixed(1)} km/h",
             Icons.trending_up),
-        _statCard("Elevation Gain", "${elevationGain.toStringAsFixed(0)} m",
+        card("Elevation Gain", "${elevationGain.toStringAsFixed(0)} m",
             Icons.terrain),
       ],
     );
@@ -400,10 +444,39 @@ class _TrackingPageState extends State<TrackingPage> {
       );
     }
 
+    final minY = getMinElevation() - 5;
+    final maxY = getMaxElevation() + 5;
+
     return SizedBox(
       height: 220,
       child: LineChart(
         LineChartData(
+          minY: minY,
+          maxY: maxY,
+          gridData: FlGridData(
+            show: true,
+            horizontalInterval: 10,
+          ),
+          borderData: FlBorderData(show: true),
+          titlesData: FlTitlesData(
+            bottomTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: (elevationData.length / 5).ceilToDouble(),
+                getTitlesWidget: (v, _) => Text(v.toInt().toString(),
+                    style: const TextStyle(fontSize: 10)),
+              ),
+            ),
+            leftTitles: AxisTitles(
+              sideTitles: SideTitles(
+                showTitles: true,
+                interval: 20,
+                reservedSize: 42,
+                getTitlesWidget: (v, _) => Text("${v.toInt()} m",
+                    style: const TextStyle(fontSize: 10)),
+              ),
+            ),
+          ),
           lineBarsData: [
             LineChartBarData(
               spots: elevationData
@@ -415,6 +488,10 @@ class _TrackingPageState extends State<TrackingPage> {
               barWidth: 3,
               color: Colors.green,
               dotData: FlDotData(show: false),
+              belowBarData: BarAreaData(
+                show: true,
+                color: Colors.green.withOpacity(0.15),
+              ),
             ),
           ],
         ),

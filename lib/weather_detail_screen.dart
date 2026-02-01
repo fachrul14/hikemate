@@ -74,7 +74,11 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   // ================= LOCATION =================
   double lat = 0;
   double lon = 0;
-  double altitude = 0; //
+  double altitude = 0;
+
+  Future<void> _onRefresh() async {
+    await fetchWeather();
+  }
 
   // ================= GPS =================
   Future<void> _getLocation() async {
@@ -91,7 +95,8 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
     }
 
     final position = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.low, // ⬅️ HEMAT BATERAI
+      desiredAccuracy: LocationAccuracy.lowest, // 🔥 PERUBAHAN (lebih cepat)
+      timeLimit: const Duration(seconds: 5), // 🔥 PERUBAHAN
     );
 
     lat = position.latitude;
@@ -101,18 +106,31 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
 
   // ================= ADDRESS =================
   Future<void> _getAddress() async {
-    final placemarks = await placemarkFromCoordinates(lat, lon);
+    try {
+      final placemarks = await placemarkFromCoordinates(lat, lon)
+          .timeout(const Duration(seconds: 3));
 
-    if (placemarks.isNotEmpty) {
-      final p = placemarks.first;
+      if (placemarks.isNotEmpty) {
+        final p = placemarks.first;
+        fullAddress = [
+          p.subLocality,
+          p.locality,
+          p.subAdministrativeArea,
+          p.administrativeArea,
+          p.country,
+        ].where((e) => e != null && e!.isNotEmpty).join(", ");
+      } else {
+        fullAddress =
+            "Lat: ${lat.toStringAsFixed(4)}, Lon: ${lon.toStringAsFixed(4)}";
+      }
+    } catch (e) {
+      debugPrint("GEOCODING FAILED: $e");
+      fullAddress =
+          "Lat: ${lat.toStringAsFixed(4)}, Lon: ${lon.toStringAsFixed(4)}";
+    }
 
-      fullAddress = [
-        p.subLocality,
-        p.locality,
-        p.subAdministrativeArea,
-        p.administrativeArea,
-        p.country,
-      ].where((e) => e != null && e!.isNotEmpty).join(", ");
+    if (mounted) {
+      setState(() {});
     }
   }
 
@@ -137,7 +155,6 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   Future<bool> loadCache() async {
     final prefs = await SharedPreferences.getInstance();
     if (!prefs.containsKey('temperature')) return false;
-
     if (!mounted) return false;
 
     setState(() {
@@ -154,7 +171,7 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
       weatherIcon = prefs.getString('weatherIcon') ?? "01d";
       fullAddress = prefs.getString('address') ?? "-";
       altitude = prefs.getDouble('altitude') ?? 0;
-      isLoading = false;
+      isLoading = false; // 🔥 PERUBAHAN
     });
 
     return true;
@@ -175,7 +192,6 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
           await http.get(Uri.parse(url)).timeout(const Duration(seconds: 5));
 
       final data = json.decode(response.body);
-
       if (!mounted) return;
 
       setState(() {
@@ -191,13 +207,14 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
         weatherMain = data['weather'][0]['main'] ?? "";
         weatherIcon = data['weather'][0]['icon'] ?? "01d";
         isLoading = false;
+        fullAddress =
+            "Lat: ${lat.toStringAsFixed(4)}, Lon: ${lon.toStringAsFixed(4)}";
       });
 
       saveCache();
 
       _getAddress().then((_) {
-        if (!mounted) return;
-        setState(() {});
+        if (mounted) setState(() {});
       });
     } catch (e) {
       debugPrint("OFFLINE MODE: $e");
@@ -208,6 +225,7 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   @override
   void initState() {
     super.initState();
+    loadCache();
     fetchWeather();
   }
 
@@ -216,131 +234,134 @@ class _WeatherDetailScreenState extends State<WeatherDetailScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.only(
-                        top: 40, bottom: 25, left: 15, right: 15),
-                    decoration: BoxDecoration(
-                      color: _getHeaderColor(),
-                      borderRadius: const BorderRadius.vertical(
-                          bottom: Radius.circular(25)),
-                    ),
-                    child: Column(
-                      children: [
-                        // ===== TOP BAR =====
-                        Row(
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.arrow_back,
-                                  color: Colors.white),
-                              onPressed: () => Navigator.pop(context),
-                            ),
-                            Image.asset(
-                              "assets/images/logo.png",
-                              width: 40,
-                              height: 40,
-                              errorBuilder: (_, __, ___) => const Icon(
+      body: RefreshIndicator(
+        onRefresh: _onRefresh,
+        child: isLoading
+            ? ListView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                children: const [
+                  SizedBox(
+                    height: 300,
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                ],
+              )
+            : SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.only(
+                          top: 40, bottom: 25, left: 15, right: 15),
+                      decoration: BoxDecoration(
+                        color: _getHeaderColor(),
+                        borderRadius: const BorderRadius.vertical(
+                          bottom: Radius.circular(25),
+                        ),
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            children: [
+                              IconButton(
+                                icon: const Icon(Icons.arrow_back,
+                                    color: Colors.white),
+                                onPressed: () => Navigator.pop(context),
+                              ),
+                              Image.asset(
+                                "assets/images/logo.png",
+                                width: 40,
+                                height: 40,
+                                errorBuilder: (_, __, ___) => const Icon(
                                   Icons.terrain,
                                   color: Colors.white,
-                                  size: 36),
-                            ),
-                            const Spacer(),
-                            const Text(
-                              "Detail Cuaca",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
+                                  size: 36,
+                                ),
                               ),
-                            ),
-                            const Spacer(),
-                          ],
-                        ),
-
-                        const SizedBox(height: 15),
-
-                        // ===== WEATHER ICON =====
-                        Image.network(
-                          "https://openweathermap.org/img/wn/$weatherIcon@4x.png",
-                          width: 60,
-                          height: 60,
-                          errorBuilder: (_, __, ___) => const Icon(Icons.cloud,
-                              size: 50, color: Colors.white),
-                        ),
-
-                        const SizedBox(height: 10),
-
-                        // ===== TEMPERATURE =====
-                        Text(
-                          "${temperature.toStringAsFixed(1)} ℃",
-                          style: const TextStyle(
+                              const Spacer(),
+                              const Text(
+                                "Detail Cuaca",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              const Spacer(),
+                            ],
+                          ),
+                          const SizedBox(height: 15),
+                          Image.network(
+                            "https://openweathermap.org/img/wn/$weatherIcon@4x.png",
+                            width: 60,
+                            height: 60,
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            "${temperature.toStringAsFixed(1)} ℃",
+                            style: const TextStyle(
                               color: Colors.white,
                               fontSize: 30,
-                              fontWeight: FontWeight.bold),
-                        ),
-
-                        // ===== CONDITION =====
-                        Column(
-                          children: [
-                            Text(
-                              normalizeConditionFromMain(weatherMain),
-                              style: const TextStyle(
-                                color: Colors.white70,
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                              ),
+                              fontWeight: FontWeight.bold,
                             ),
-                            Text(
-                              condition,
-                              style: const TextStyle(
-                                color: Colors.white38,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // ===== ADDRESS =====
-                        Text(
-                          fullAddress == "-"
-                              ? "Mengambil lokasi..."
-                              : fullAddress,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
                           ),
-                        ),
-                      ],
+                          Column(
+                            children: [
+                              Text(
+                                normalizeConditionFromMain(weatherMain),
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Text(
+                                condition,
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            fullAddress == "-"
+                                ? "Mengambil lokasi..."
+                                : fullAddress,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 13,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 30),
-                  _weatherCard([
-                    _buildWeatherRow(
-                        Icons.thermostat, "Terasa", "$feelsLike ℃"),
-                    _buildWeatherRow(Icons.air, "Angin", "$windSpeed m/s"),
-                    _buildWeatherRow(
-                        Icons.water_drop, "Kelembapan", "$humidity %"),
-                    _buildWeatherRow(Icons.speed, "Tekanan", "$pressure hPa"),
-                    _buildWeatherRow(Icons.remove_red_eye, "Visibility",
-                        "${(visibility / 1000).toStringAsFixed(1)} km"),
-                    _buildWeatherRow(
-                        Icons.cloud, "Cloudiness", "$cloudiness %"),
-                    _buildWeatherRow(
-                      Icons.navigation,
-                      "Arah Angin",
-                      "${windDirectionFromDegree(windDegree)} ($windDegree°)",
-                    ),
-                  ]),
-                ],
+                    const SizedBox(height: 30),
+                    _weatherCard([
+                      _buildWeatherRow(
+                          Icons.thermostat, "Terasa", "$feelsLike ℃"),
+                      _buildWeatherRow(Icons.air, "Angin", "$windSpeed m/s"),
+                      _buildWeatherRow(
+                          Icons.water_drop, "Kelembapan", "$humidity %"),
+                      _buildWeatherRow(Icons.speed, "Tekanan", "$pressure hPa"),
+                      _buildWeatherRow(
+                        Icons.remove_red_eye,
+                        "Visibility",
+                        "${(visibility / 1000).toStringAsFixed(1)} km",
+                      ),
+                      _buildWeatherRow(
+                          Icons.cloud, "Cloudiness", "$cloudiness %"),
+                      _buildWeatherRow(
+                        Icons.navigation,
+                        "Arah Angin",
+                        "${windDirectionFromDegree(windDegree)} ($windDegree°)",
+                      ),
+                    ]),
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 

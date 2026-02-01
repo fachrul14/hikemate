@@ -77,10 +77,10 @@ class _EditProfilScreenState extends State<EditProfilScreen> {
 
     String phone = contact.phones.first.number;
 
-    // 🔹 Bersihkan karakter selain angka
+    // Bersihkan karakter selain angka
     phone = phone.replaceAll(RegExp(r'[^0-9]'), '');
 
-    // 🔹 Konversi 08xxxx → 628xxxx
+    // Konversi 08xxxx → 628xxxx
     if (phone.startsWith('08')) {
       phone = phone.replaceFirst('08', '628');
     }
@@ -93,44 +93,58 @@ class _EditProfilScreenState extends State<EditProfilScreen> {
 
   // ================= FETCH PROFILE =================
   Future<void> fetchProfile() async {
-    final user = supabase.auth.currentUser;
-    if (user == null) return;
+    try {
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
 
-    final profile =
-        await supabase.from('profiles').select().eq('id', user.id).single();
+      final profile =
+          await supabase.from('profiles').select().eq('id', user.id).single();
 
-    final contacts = await supabase
-        .from('emergency_contacts')
-        .select('name, phone')
-        .eq('user_id', user.id)
-        .order('created_at', ascending: true)
-        .limit(2);
+      final contacts = await supabase
+          .from('emergency_contacts')
+          .select('name, phone')
+          .eq('user_id', user.id)
+          .order('created_at', ascending: true)
+          .limit(2);
 
-    setState(() {
-      usernameController.text = profile['username'] ?? '';
-      phoneController.text = profile['phone'] ?? '';
+      setState(() {
+        usernameController.text = profile['username'] ?? '';
+        phoneController.text = profile['phone'] ?? '';
+        emailController.text = user.email ?? '';
 
-      emailController.text = user.email ?? '';
+        selectedGender = profile['gender'];
+        avatarUrl = profile['avatar_url'];
 
-      selectedGender = profile['gender'];
-      avatarUrl = profile['avatar_url'];
+        if (profile['birth_date'] != null) {
+          selectedBirthDate = DateTime.parse(profile['birth_date']);
+        }
 
-      if (profile['birth_date'] != null) {
-        selectedBirthDate = DateTime.parse(profile['birth_date']);
+        if (contacts.isNotEmpty) {
+          emergencyName1.text = contacts[0]['name'];
+          emergencyPhone1.text = contacts[0]['phone'];
+        }
+
+        if (contacts.length > 1) {
+          emergencyName2.text = contacts[1]['name'];
+          emergencyPhone2.text = contacts[1]['phone'];
+        }
+      });
+    } catch (e, stackTrace) {
+      debugPrint("fetchProfile error: $e");
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (mounted) {
+        ToastService.show(
+          context,
+          message: "Gagal memuat profil",
+          type: ToastType.error,
+        );
       }
-
-      if (contacts.isNotEmpty) {
-        emergencyName1.text = contacts[0]['name'];
-        emergencyPhone1.text = contacts[0]['phone'];
+    } finally {
+      if (mounted) {
+        setState(() => isLoading = false);
       }
-
-      if (contacts.length > 1) {
-        emergencyName2.text = contacts[1]['name'];
-        emergencyPhone2.text = contacts[1]['phone'];
-      }
-
-      isLoading = false;
-    });
+    }
   }
 
   // ================= IMAGE =================
@@ -142,9 +156,14 @@ class _EditProfilScreenState extends State<EditProfilScreen> {
   }
 
   Future<XFile?> compressImage(File file) async {
+    final targetPath = file.path.replaceFirst(
+      RegExp(r'\.(jpg|jpeg|png)$'),
+      '_c.jpg',
+    );
+
     return await FlutterImageCompress.compressAndGetFile(
       file.path,
-      file.path.replaceAll('.jpg', '_c.jpg'),
+      targetPath,
       quality: 60,
     );
   }
@@ -175,51 +194,80 @@ class _EditProfilScreenState extends State<EditProfilScreen> {
 
     setState(() => isSaving = true);
 
-    String? imageUrl = avatarUrl;
-    if (selectedImage != null) {
-      final compressed = await compressImage(selectedImage!);
-      if (compressed != null) {
-        imageUrl = await uploadToCloudinary(File(compressed.path));
+    try {
+      String? imageUrl = avatarUrl;
+
+      if (selectedImage != null) {
+        final compressed = await compressImage(selectedImage!);
+        if (compressed != null) {
+          imageUrl = await uploadToCloudinary(File(compressed.path));
+        }
+      }
+
+      await supabase.from('profiles').update({
+        'username': usernameController.text,
+        'phone': phoneController.text,
+        'gender': selectedGender,
+        'birth_date': selectedBirthDate?.toIso8601String().split('T').first,
+        'avatar_url': imageUrl,
+      }).eq('id', user.id);
+
+      await supabase.from('emergency_contacts').upsert([
+        {
+          'user_id': user.id,
+          'name': emergencyName1.text,
+          'phone': emergencyPhone1.text,
+        },
+        {
+          'user_id': user.id,
+          'name': emergencyName2.text,
+          'phone': emergencyPhone2.text,
+        }
+      ]);
+
+      if (emergencyName1.text.isNotEmpty) {
+        await supabase.from('emergency_contacts').insert({
+          'user_id': user.id,
+          'name': emergencyName1.text,
+          'phone': emergencyPhone1.text,
+        });
+      }
+
+      if (emergencyName2.text.isNotEmpty) {
+        await supabase.from('emergency_contacts').insert({
+          'user_id': user.id,
+          'name': emergencyName2.text,
+          'phone': emergencyPhone2.text,
+        });
+      }
+
+      if (!mounted) return;
+
+      ToastService.show(
+        context,
+        message: "Profil berhasil diperbarui",
+        type: ToastType.success,
+      );
+
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) Navigator.pop(context);
+      });
+    } catch (e, stackTrace) {
+      debugPrint("saveProfile error: $e");
+      debugPrintStack(stackTrace: stackTrace);
+
+      if (mounted) {
+        ToastService.show(
+          context,
+          message: "Gagal menyimpan profil",
+          type: ToastType.error,
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => isSaving = false);
       }
     }
-
-    await supabase.from('profiles').update({
-      'username': usernameController.text,
-      'phone': phoneController.text,
-      'gender': selectedGender,
-      'birth_date': selectedBirthDate?.toIso8601String().split('T').first,
-      'avatar_url': imageUrl,
-    }).eq('id', user.id);
-
-    await supabase.from('emergency_contacts').delete().eq('user_id', user.id);
-
-    if (emergencyName1.text.isNotEmpty) {
-      await supabase.from('emergency_contacts').insert({
-        'user_id': user.id,
-        'name': emergencyName1.text,
-        'phone': emergencyPhone1.text,
-      });
-    }
-
-    if (emergencyName2.text.isNotEmpty) {
-      await supabase.from('emergency_contacts').insert({
-        'user_id': user.id,
-        'name': emergencyName2.text,
-        'phone': emergencyPhone2.text,
-      });
-    }
-
-    setState(() => isSaving = false);
-
-    ToastService.show(
-      context,
-      message: "Profil berhasil diperbarui",
-      type: ToastType.success,
-    );
-
-    Future.delayed(const Duration(seconds: 2), () {
-      Navigator.pop(context);
-    });
   }
 
   // ================= UI =================

@@ -5,9 +5,16 @@
     <uses-permission android:name="android.permission.READ_CONTACTS"/>
 
     <queries>
-    <package android:name="com.whatsapp" />
-    <package android:name="com.whatsapp.w4b" />
-</queries>
+    <!-- WhatsApp -->
+        <package android:name="com.whatsapp" />
+        <package android:name="com.whatsapp.w4b" />
+
+        <!-- Flutter text processing -->
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT" />
+            <data android:mimeType="text/plain" />
+        </intent>
+    </queries>
 
 
 
@@ -55,13 +62,7 @@
             android:name="flutterEmbedding"
             android:value="2" />
     </application>
+    
 
-    <!-- Required for Flutter text processing -->
-    <queries>
-        <intent>
-            <action android:name="android.intent.action.PROCESS_TEXT" />
-            <data android:mimeType="text/plain" />
-        </intent>
-    </queries>
 
 </manifest>

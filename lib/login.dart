@@ -13,6 +13,8 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _loading = false;
 
   final supabase = Supabase.instance.client;
 
@@ -37,10 +39,23 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
 
+    // ===== VALIDASI =====
     if (email.isEmpty || password.isEmpty) {
       _showMessage("Email dan password wajib diisi");
       return;
     }
+
+    if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(email)) {
+      _showMessage("Format email tidak valid");
+      return;
+    }
+
+    if (password.length < 6) {
+      _showMessage("Password minimal 6 karakter");
+      return;
+    }
+
+    setState(() => _loading = true);
 
     try {
       await supabase.auth.signInWithPassword(
@@ -50,7 +65,11 @@ class _LoginScreenState extends State<LoginScreen> {
     } on AuthException catch (e) {
       _showMessage(e.message);
     } catch (_) {
-      _showMessage("Login gagal");
+      _showMessage("Login gagal, coba lagi");
+    } finally {
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -95,10 +114,17 @@ class _LoginScreenState extends State<LoginScreen> {
                 "Kata Sandi",
                 controller: _passwordController,
                 isPassword: true,
+                obscure: _obscurePassword,
+                onToggle: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
               ),
               const SizedBox(height: 20),
               _actionButton(
                 text: "Masuk",
+                isLoading: _loading,
                 onPressed: _login,
               ),
               const SizedBox(height: 12),
@@ -169,11 +195,13 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _inputField(
     String hint, {
     bool isPassword = false,
+    bool obscure = false,
+    VoidCallback? onToggle,
     required TextEditingController controller,
   }) {
     return TextField(
       controller: controller,
-      obscureText: isPassword,
+      obscureText: isPassword ? obscure : false,
       decoration: InputDecoration(
         hintText: hint,
         contentPadding:
@@ -186,6 +214,15 @@ class _LoginScreenState extends State<LoginScreen> {
           borderRadius: BorderRadius.circular(10),
           borderSide: const BorderSide(color: Colors.black, width: 1.5),
         ),
+        suffixIcon: isPassword
+            ? IconButton(
+                icon: Icon(
+                  obscure ? Icons.visibility_off : Icons.visibility,
+                  color: Colors.grey,
+                ),
+                onPressed: onToggle,
+              )
+            : null,
       ),
     );
   }
@@ -194,6 +231,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget _actionButton({
     required String text,
     required VoidCallback onPressed,
+    bool isLoading = false,
   }) {
     return SizedBox(
       width: double.infinity,
@@ -208,14 +246,23 @@ class _LoginScreenState extends State<LoginScreen> {
             side: const BorderSide(color: Colors.black),
           ),
         ),
-        onPressed: onPressed,
-        child: Text(
-          text,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
-        ),
+        onPressed: isLoading ? null : onPressed,
+        child: isLoading
+            ? const SizedBox(
+                width: 24,
+                height: 24,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2.5,
+                  color: Colors.black,
+                ),
+              )
+            : Text(
+                text,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
       ),
     );
   }

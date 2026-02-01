@@ -156,14 +156,24 @@ class _RutePageState extends State<RutePage> {
             label: "Download",
             color: Colors.blue,
             onTap: () async {
-              await GpxService.saveGpxOffline(
-                widget.gpxPath,
-                "${widget.namaGunung}.gpx",
-              );
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text("Rute disimpan offline")),
-              );
+              try {
+                await GpxService.saveGpxOffline(
+                  widget.gpxPath,
+                  "${widget.namaGunung}.gpx",
+                );
+
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Rute disimpan offline")),
+                );
+              } catch (e) {
+                if (!mounted) return;
+
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Gagal menyimpan rute")),
+                );
+              }
             },
           ),
           const SizedBox(height: 10),

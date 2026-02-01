@@ -3,7 +3,7 @@ import 'edit_profil.dart';
 import 'informasi_akun.dart';
 import 'tentang.dart';
 import 'login.dart';
-import 'tambah_kontak_darurat.dart';
+import 'kontak_darurat.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:hikemate/widgets/app_header.dart';
 
@@ -274,8 +274,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                  builder: (_) =>
-                                      const TambahKontakDaruratScreen()),
+                                  builder: (_) => const KontakDaruratScreen()),
                             );
                           }),
                           const Divider(height: 1),

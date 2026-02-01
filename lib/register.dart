@@ -14,6 +14,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
 
   final supabase = Supabase.instance.client;
   bool _loading = false;
@@ -38,7 +40,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _loading = true);
 
     try {
-      // 1️⃣ Register ke Supabase Auth
+      // Register ke Supabase Auth
       await supabase.auth.signUp(
         email: email,
         password: password,
@@ -46,13 +48,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'name': name,
           'phone': phone,
         },
-      );
-
-      // 2️⃣ JANGAN insert profile di sini
-      // (akan kita lakukan saat login berhasil)
-
-      _showMessage(
-        "Registrasi berhasil. Silakan login.",
       );
 
       if (!mounted) return;
@@ -94,11 +89,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 "Kata Sandi",
                 controller: _passwordController,
                 isPassword: true,
+                obscure: _obscurePassword,
+                onToggle: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
               ),
               _inputField(
                 "Konfirmasi Kata Sandi",
                 controller: _confirmPasswordController,
                 isPassword: true,
+                obscure: _obscureConfirmPassword,
+                onToggle: () {
+                  setState(() {
+                    _obscureConfirmPassword = !_obscureConfirmPassword;
+                  });
+                },
               ),
               const SizedBox(height: 20),
               SizedBox(
@@ -136,14 +143,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Widget _inputField(
     String hint, {
-    bool isPassword = false,
     required TextEditingController controller,
+    bool isPassword = false,
+    bool? obscure,
+    VoidCallback? onToggle,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: TextField(
         controller: controller,
-        obscureText: isPassword,
+        obscureText: isPassword ? (obscure ?? true) : false,
         decoration: InputDecoration(
           hintText: hint,
           enabledBorder: OutlineInputBorder(
@@ -154,6 +163,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
             borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: Colors.black, width: 1.5),
           ),
+          suffixIcon: isPassword
+              ? IconButton(
+                  icon: Icon(
+                    (obscure ?? true) ? Icons.visibility_off : Icons.visibility,
+                    color: Colors.grey,
+                  ),
+                  onPressed: onToggle,
+                )
+              : null,
         ),
       ),
     );
